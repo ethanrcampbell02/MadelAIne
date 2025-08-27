@@ -1,0 +1,6 @@
+- Name: MadelAIne
+  Version: 0.1.0
+  DLL: bin/MadelAIne.dll
+  Dependencies:
+    - Name: EverestCore
+      Version: 1.5577.0
