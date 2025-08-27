@@ -79,12 +79,14 @@ class CelesteEnv(gym.Env):
         terminated = False
 
         # Truncate after 10 seconds (600 steps)
-        self._steps += 1
-        truncated = self._steps > 600
+        truncated = self._steps >= 600
 
         # Reward is inversely proportional to distance from target
         distance = info["distance"] if info["distance"] is not None else float('inf')
         reward = -0.1 * distance
+
+        print(f"Finished step {self._steps}")
+        self._steps += 1
 
         return observation, reward, terminated, truncated, info
 
@@ -101,6 +103,8 @@ class CelesteEnv(gym.Env):
                 else:
                     try:
                         self._json_data = json.loads(data.decode('utf-8'))
+                        # Send ACK after successful receipt
+                        self._conn.sendall(b"ACK")
                     except json.JSONDecodeError:
                         print(f"Received invalid JSON from {self._addr}: {data}")
                         self._json_data = None
@@ -119,8 +123,6 @@ class CelesteEnv(gym.Env):
             "targetPosition": np.array([self._json_data["targetXPosition"], self._json_data["targetYPosition"]], dtype=np.float32),
             "roomTileData": np.array(self._json_data["solidTileData"], dtype=np.bool)
         }
-
-        print(f"Finished step {self._steps}")
 
         return observation
     

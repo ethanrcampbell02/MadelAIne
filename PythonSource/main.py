@@ -50,7 +50,8 @@ for i in range(NUM_OF_EPISODES):
         action_multi_binary = [int(x) for x in format(a, f'0{env.action_space.n}b')]
         action = np.array(action_multi_binary, dtype=np.float32)
 
-        new_state, reward, done, truncated, info  = env.step(action)
+        new_state, reward, terminated, truncated, info  = env.step(action)
+        done = terminated or truncated
         total_reward += reward
 
         new_state = gym.spaces.utils.flatten(env.observation_space, new_state)

@@ -183,6 +183,16 @@ public class MadelAIneModule : EverestModule
             }
 
             tcpStream.Write(data, 0, data.Length);
+
+            Logger.Log(nameof(MadelAIneModule), "Waiting for ACK...");
+            byte[] buffer = new byte[1024];
+            tcpStream.Read(buffer, 0, buffer.Length);
+            string response = Encoding.UTF8.GetString(buffer);
+            if (response != "ACK")
+            {
+                Logger.Error(nameof(MadelAIneModule), $"Unexpected response from Python client: {response}");
+            }
+
         }
         catch (Exception ex)
         {
