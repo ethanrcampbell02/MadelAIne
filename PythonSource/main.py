@@ -1,6 +1,7 @@
 import torch
 import logging
 from tqdm import trange
+import matplotlib.pyplot as plt
 
 from MadelAIneAgent import MadelAIneAgent
 
@@ -48,7 +49,7 @@ else:
 
 SHOULD_TRAIN = True
 CKPT_SAVE_INTERVAL = 1000
-NUM_OF_EPISODES = 100000
+NUM_OF_EPISODES = 500
 
 env = CelesteEnv()
 
@@ -63,6 +64,9 @@ if not SHOULD_TRAIN:
     agent.epsilon = 0.2
     agent.eps_min = 0.0
     agent.eps_decay = 0.0
+
+episode_rewards = []
+episode_losses = []
 
 for i in trange(NUM_OF_EPISODES, desc="Training Episodes"):
     done = False
@@ -90,9 +94,27 @@ for i in trange(NUM_OF_EPISODES, desc="Training Episodes"):
         state_flatten = new_state_flatten
 
     avg_loss = np.mean(batch_losses) if batch_losses else None
+    episode_rewards.append(total_reward)
+    episode_losses.append(avg_loss if avg_loss is not None else 0)
     logging.info(f"Total reward: {total_reward} | Avg loss: {avg_loss} | Epsilon: {agent.epsilon} | Replay buffer size: {len(agent.replay_buffer)} | Learn step counter: {agent.learn_step_counter}")
 
     if SHOULD_TRAIN and (i + 1) % CKPT_SAVE_INTERVAL == 0:
         agent.save_model(os.path.join(model_path, "model_" + str(i + 1) + "_iter.pt"))
+
+# Plot and save episode rewards and losses
+plt.figure(figsize=(12, 6))
+plt.subplot(2, 1, 1)
+plt.plot(episode_rewards, label='Episode Reward')
+plt.xlabel('Episode')
+plt.ylabel('Reward')
+plt.legend()
+plt.subplot(2, 1, 2)
+plt.plot(episode_losses, label='Episode Loss')
+plt.xlabel('Episode')
+plt.ylabel('Loss')
+plt.legend()
+plt.tight_layout()
+plt.savefig(os.path.join(model_path, 'training_metrics.png'))
+plt.close()
 
 env.close()
