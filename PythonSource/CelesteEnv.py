@@ -4,9 +4,12 @@ import pynput.keyboard
 import numpy as np
 import time
 from typing import Optional
+import logging
 
 from CelesteInputs import CelesteInputs
 import gymnasium as gym
+
+logging.basicConfig(level=logging.INFO)
 
 class CelesteEnv(gym.Env):
 
@@ -23,9 +26,9 @@ class CelesteEnv(gym.Env):
         self._server_sock.bind((CelesteEnv.TCP_IP, CelesteEnv.TCP_PORT))
         self._server_sock.listen(1)
 
-        print(f"Waiting for connection from C# client on {CelesteEnv.TCP_IP}:{CelesteEnv.TCP_PORT}...")
+        logging.info(f"Waiting for connection from C# client on {CelesteEnv.TCP_IP}:{CelesteEnv.TCP_PORT}...")
         self._conn, self._addr = self._server_sock.accept()
-        print(f"Connected to {self._addr}")
+        logging.info(f"Connected to {self._addr}")
 
         self._json_data = None
         self._celeste_inputs = CelesteInputs()
@@ -45,9 +48,14 @@ class CelesteEnv(gym.Env):
 
         self.action_space = gym.spaces.MultiBinary(7)  # up, down, left, right, jump, dash, grab
 
+    def close(self):
+        logging.debug("Closing environment")
+        self._conn.close()
+        self._server_sock.close()
+        self._celeste_inputs.reset_keyboard()
 
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
-        print("Resetting environment")
+        logging.debug("Resetting environment")
 
         self._options = options
 
@@ -57,8 +65,16 @@ class CelesteEnv(gym.Env):
 
         self._steps = 0
 
+        # Receive a dummy message and send the reset message
+        self._conn.recv(self.BUFFER_SIZE)
+        reset_msg = json.dumps({"type": "reset"}).encode('utf-8')
+        self._conn.sendall(reset_msg)
+
         observation = self._get_obs()
         info = self._get_info()
+
+        self._starting_distance = info["distance"] if info["distance"] is not None else float('999999')
+        self._best_distance = self._starting_distance
 
         # DEBUG: Write JSON data to file
         with open("debug.json", "w") as f:
@@ -75,18 +91,37 @@ class CelesteEnv(gym.Env):
         observation = self._get_obs()
         info = self._get_info()
 
-        # TODO: Terminate if the agent died or reached the next room
-        terminated = False
+        # TODO: Terminate if reached the next room
+        terminated = info["playerDied"] if info is not None and "playerDied" in info else False
+        if terminated:
+            logging.debug("Episode terminated: player died")
 
-        # Truncate after 10 seconds (600 steps)
-        truncated = self._steps >= 600
+        # Truncate after 30 seconds
+        truncated = self._steps >= 1800
+        if truncated:
+            logging.debug("Episode truncated: time limit reached")
 
         # Reward is inversely proportional to distance from target
         distance = info["distance"] if info["distance"] is not None else float('inf')
-        reward = -0.1 * distance
+        
+        # Keep track of the best distance to the target. If it improves, update the reward
+        if self._best_distance is None or distance < self._best_distance:
+            reward = self._best_distance - distance
+            self._best_distance = distance
+            logging.debug(f"New best distance: {self._best_distance:.2f}")
+        else:
+            reward = 0
 
-        print(f"Finished step {self._steps}")
+        # Penalize if died
+        if info is not None and "playerDied" in info and info["playerDied"]:
+            reward = reward - 10.0
+
+        # Penalize for each step taken
+        reward = reward - 0.1
+
         self._steps += 1
+
+        logging.debug(f"Finished step {self._steps}")
 
         return observation, reward, terminated, truncated, info
 
@@ -104,12 +139,13 @@ class CelesteEnv(gym.Env):
                     try:
                         self._json_data = json.loads(data.decode('utf-8'))
                         # Send ACK after successful receipt
-                        self._conn.sendall(b"ACK")
+                        ack_msg = json.dumps({"type": "ACK"}).encode('utf-8')
+                        self._conn.sendall(ack_msg)
                     except json.JSONDecodeError:
-                        print(f"Received invalid JSON from {self._addr}: {data}")
+                        logging.warning(f"Received invalid JSON from {self._addr}: {data}")
                         self._json_data = None
             except Exception as e:
-                print(f"Error receiving data: {e}")
+                logging.error(f"Error receiving data: {e}")
                 self._json_data = None
 
         if self._json_data is None:
@@ -138,7 +174,8 @@ class CelesteEnv(gym.Env):
                     np.array([self._json_data["playerXPosition"], self._json_data["playerYPosition"]], dtype=np.float32) -
                     np.array([self._json_data["targetXPosition"], self._json_data["targetYPosition"]], dtype=np.float32)
                 ),
-                "steps": self._steps
+                "steps": self._steps,
+                "playerDied": self._json_data["playerDied"] if "playerDied" in self._json_data else False
             }
         else:
             return None

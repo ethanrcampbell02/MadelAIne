@@ -23,6 +23,9 @@ namespace Celeste.Mod.MadelAIne
         [JsonPropertyName("playerStamina")]
         public float PlayerStamina { get; set; }
 
+        [JsonPropertyName("playerDied")]
+        public bool PlayerDied { get; set; }
+
         [JsonPropertyName("targetXPosition")]
         public float TargetXPosition { get; set; }
 

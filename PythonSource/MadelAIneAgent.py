@@ -104,4 +104,6 @@ class MadelAIneAgent:
 
         self.learn_step_counter += 1
         self.decay_epsilon()
+
+        return loss.item()
         

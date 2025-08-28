@@ -33,6 +33,7 @@ public class MadelAIneModule : EverestModule
     private Player LastPlayer = null;
     private Vector2 LastExactPos = Vector2.Zero;
     private string LastRoomName = null;
+    private bool PlayerDied = false;
     private List<int[]> SolidTileData = null;
     private TcpClient tcpClient = null;
     private NetworkStream tcpStream = null;
@@ -41,13 +42,7 @@ public class MadelAIneModule : EverestModule
     public MadelAIneModule()
     {
         Instance = this;
-#if DEBUG
-        // debug builds use verbose logging
-        Logger.SetLogLevel(nameof(MadelAIneModule), LogLevel.Verbose);
-#else
-        // release builds use info logging to reduce spam in log files
         Logger.SetLogLevel(nameof(MadelAIneModule), LogLevel.Info);
-#endif
     }
 
     public override void Load()
@@ -104,6 +99,14 @@ public class MadelAIneModule : EverestModule
 
         LastExactPos = pos;
 
+        // Check if player died during this step
+        bool playerDiedThisStep = false;
+        if (player.Dead && !PlayerDied)
+        {
+            PlayerDied = true;
+            playerDiedThisStep = true;
+        }
+
         UpdateRoomLayout();
 
         // Update the game state
@@ -115,6 +118,7 @@ public class MadelAIneModule : EverestModule
             PlayerYVelocity = velocity.Y,
             PlayerCanDash = player.CanDash,
             PlayerStamina = player.Stamina,
+            PlayerDied = playerDiedThisStep,
             TargetXPosition = 264f,               // FIXME: Currently hardcoded to second room of 1A
             TargetYPosition = -24f,               // FIXME: Currently hardcoded to second room of 1A
             SolidTileData = SolidTileData
@@ -133,12 +137,12 @@ public class MadelAIneModule : EverestModule
         if (LastRoomName != null && LastRoomName == debugRoomName) return;
         LastRoomName = debugRoomName;
 
-        Logger.Log(nameof(MadelAIneModule), $"Entered new room: {debugRoomName}");
+        Logger.Info(nameof(MadelAIneModule), $"Entered new room: {debugRoomName}");
 
         int offsetX = level.LevelSolidOffset.X;
         int offsetY = level.LevelSolidOffset.Y;
-        int width = level.Bounds.Width / 8;
-        int height = level.Bounds.Height / 8;
+        int width = (int)Math.Ceiling(level.Bounds.Width / 8f);
+        int height = (int)Math.Ceiling(level.Bounds.Height / 8f);
         SolidTileData = new List<int[]>();
         for (int y = 0; y < height; y++)
         {
@@ -153,6 +157,19 @@ public class MadelAIneModule : EverestModule
         }
     }
 
+    private void ResetGameState()
+    {
+        LastPlayer = null;
+        LastExactPos = Vector2.Zero;
+        PlayerDied = false;
+        LastRoomName = null;
+        SolidTileData = new List<int[]>();
+
+        // Load Celeste/1-ForsakenCity room 1
+        if (!(Engine.Scene is Level)) return;
+        Level level = (Level)Engine.Scene;
+        level.Reload();
+    }
     private void SendGameState(GameState state)
     {
         // Send the game state to the Python client using TCP
@@ -184,15 +201,12 @@ public class MadelAIneModule : EverestModule
 
             tcpStream.Write(data, 0, data.Length);
 
-            Logger.Log(nameof(MadelAIneModule), "Waiting for ACK...");
-            byte[] buffer = new byte[1024];
-            tcpStream.Read(buffer, 0, buffer.Length);
-            string response = Encoding.UTF8.GetString(buffer);
-            if (response != "ACK")
-            {
-                Logger.Error(nameof(MadelAIneModule), $"Unexpected response from Python client: {response}");
-            }
+            bool reset = ReceiveResponse();
 
+            if (reset)
+            {
+                ResetGameState();
+            }
         }
         catch (Exception ex)
         {
@@ -210,6 +224,42 @@ public class MadelAIneModule : EverestModule
             }
             Settings.EnableMadelAIne = false;
         }
+    }
 
+    private bool ReceiveResponse()
+    {
+        Logger.Debug(nameof(MadelAIneModule), "Waiting for ACK...");
+        byte[] buffer = new byte[1024];
+        int bytesRead = tcpStream.Read(buffer, 0, buffer.Length);
+        string response = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim('\0');
+        try
+        {
+            using var doc = JsonDocument.Parse(response);
+            if (!doc.RootElement.TryGetProperty("type", out var typeProp))
+            {
+                Logger.Error(nameof(MadelAIneModule), $"Unexpected response from Python client: {response}");
+                return false;
+            }
+            string type = typeProp.GetString();
+            if (type == "ACK")
+            {
+                return false;
+            }
+            else if (type == "reset")
+            {
+                Logger.Info(nameof(MadelAIneModule), "Reset requested by Python client.");
+                return true;
+            }
+            else
+            {
+                Logger.Error(nameof(MadelAIneModule), $"Unexpected response type from Python client: {type}");
+                return false;
+            }
+        }
+        catch (JsonException)
+        {
+            Logger.Error(nameof(MadelAIneModule), $"Invalid JSON response from Python client: {response}");
+            return false;
+        }
     }
 }
