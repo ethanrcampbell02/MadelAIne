@@ -17,6 +17,11 @@ import numpy as np
 import logging
 from tqdm import tqdm
 
+SHOULD_TRAIN = True
+CKPT_SAVE_INTERVAL = 1000
+NUM_OF_EPISODES = 10000
+TRAIN_FROM_CKPT = True
+
 class TqdmLoggingHandler(logging.Handler):
     def __init__(self, level=logging.NOTSET):
         super().__init__(level)
@@ -47,10 +52,6 @@ if torch.cuda.is_available():
 else:
     print("CUDA is not available")
 
-SHOULD_TRAIN = True
-CKPT_SAVE_INTERVAL = 1000
-NUM_OF_EPISODES = 500
-
 env = CelesteEnv()
 
 input_dims = gym.spaces.utils.flatdim(env.observation_space)
@@ -58,12 +59,19 @@ num_actions = 2 ** env.action_space.n
 agent = MadelAIneAgent(input_dims=input_dims, num_actions=num_actions)
 
 if not SHOULD_TRAIN:
-    folder_name = ""
-    ckpt_name = ""
+    folder_name = "2025-08-27-23_59_18"
+    ckpt_name = "model_7000_iter.pt"
     agent.load_model(os.path.join("models", folder_name, ckpt_name))
-    agent.epsilon = 0.2
+    agent.epsilon = 0.01
     agent.eps_min = 0.0
     agent.eps_decay = 0.0
+elif TRAIN_FROM_CKPT:
+    folder_name = "2025-08-27-23_59_18"
+    ckpt_name = "model_7000_iter.pt"
+    agent.load_model(os.path.join("models", folder_name, ckpt_name))
+    agent.epsilon = 0.5
+    agent.eps_min = 0.01
+    agent.eps_decay = 0.99999950
 
 episode_rewards = []
 episode_losses = []

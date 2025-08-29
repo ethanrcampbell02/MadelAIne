@@ -34,6 +34,7 @@ public class MadelAIneModule : EverestModule
     private Vector2 LastExactPos = Vector2.Zero;
     private string LastRoomName = null;
     private bool PlayerDied = false;
+    private bool ReachedNextRoom = false;
     private List<int[]> SolidTileData = null;
     private TcpClient tcpClient = null;
     private NetworkStream tcpStream = null;
@@ -119,6 +120,7 @@ public class MadelAIneModule : EverestModule
             PlayerCanDash = player.CanDash,
             PlayerStamina = player.Stamina,
             PlayerDied = playerDiedThisStep,
+            NextRoom = ReachedNextRoom,
             TargetXPosition = 264f,               // FIXME: Currently hardcoded to second room of 1A
             TargetYPosition = -24f,               // FIXME: Currently hardcoded to second room of 1A
             SolidTileData = SolidTileData
@@ -135,9 +137,14 @@ public class MadelAIneModule : EverestModule
         string debugRoomName = level.Session.Level;
         //If we are in the same room as last frame
         if (LastRoomName != null && LastRoomName == debugRoomName) return;
+        if (LastRoomName != null && LastRoomName != debugRoomName)
+        {
+            ReachedNextRoom = true;
+        }
+        
         LastRoomName = debugRoomName;
 
-        Logger.Info(nameof(MadelAIneModule), $"Entered new room: {debugRoomName}");
+        Logger.Info(nameof(MadelAIneModule), $"Entered new room: '{debugRoomName}'");
 
         int offsetX = level.LevelSolidOffset.X;
         int offsetY = level.LevelSolidOffset.Y;
@@ -162,13 +169,24 @@ public class MadelAIneModule : EverestModule
         LastPlayer = null;
         LastExactPos = Vector2.Zero;
         PlayerDied = false;
+        ReachedNextRoom = false;
         LastRoomName = null;
         SolidTileData = new List<int[]>();
 
         // Load Celeste/1-ForsakenCity room 1
         if (!(Engine.Scene is Level)) return;
         Level level = (Level)Engine.Scene;
-        level.Reload();
+        Player player = level.Tracker.GetEntity<Player>();
+        if (player == null)
+        {
+            // Player is currently dead, just reload the room
+            level.Reload();
+        }
+        else
+        {
+            // Player is alive, reset back to room 1
+            level.TeleportTo(player, "1", Player.IntroTypes.Respawn);
+        }
     }
     private void SendGameState(GameState state)
     {

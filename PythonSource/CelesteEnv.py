@@ -112,6 +112,12 @@ class CelesteEnv(gym.Env):
         else:
             reward = 0
 
+        # Big reward for making it to the next room
+        if info is not None and "nextRoom" in info and info["nextRoom"]:
+            reward = reward + 50.0
+            terminated = True
+            logging.debug("Episode terminated: reached next room")
+
         # Penalize if died
         if info is not None and "playerDied" in info and info["playerDied"]:
             reward = reward - 10.0
@@ -175,7 +181,8 @@ class CelesteEnv(gym.Env):
                     np.array([self._json_data["targetXPosition"], self._json_data["targetYPosition"]], dtype=np.float32)
                 ),
                 "steps": self._steps,
-                "playerDied": self._json_data["playerDied"] if "playerDied" in self._json_data else False
+                "playerDied": self._json_data["playerDied"] if "playerDied" in self._json_data else False,
+                "nextRoom": self._json_data["nextRoom"] if "nextRoom" in self._json_data else False
             }
         else:
             return None
