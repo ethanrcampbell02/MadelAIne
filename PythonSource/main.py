@@ -20,7 +20,7 @@ from tqdm import tqdm
 SHOULD_TRAIN = True
 CKPT_SAVE_INTERVAL = 1000
 NUM_OF_EPISODES = 10000
-TRAIN_FROM_CKPT = True
+TRAIN_FROM_CKPT = False
 
 class TqdmLoggingHandler(logging.Handler):
     def __init__(self, level=logging.NOTSET):
@@ -52,6 +52,7 @@ if torch.cuda.is_available():
 else:
     print("CUDA is not available")
 
+env_options = {"reward_mode" : "delta"}
 env = CelesteEnv()
 
 input_dims = gym.spaces.utils.flatdim(env.observation_space)
@@ -78,7 +79,7 @@ episode_losses = []
 
 for i in trange(NUM_OF_EPISODES, desc="Training Episodes"):
     done = False
-    state, _ = env.reset()
+    state, _ = env.reset(env_options)
     state_flatten = gym.spaces.utils.flatten(env.observation_space, state)
     total_reward = 0
     batch_losses = []

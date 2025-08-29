@@ -34,6 +34,7 @@ class CelesteEnv(gym.Env):
         self._celeste_inputs = CelesteInputs()
 
         self._steps = 0
+        self._prev_distance = None
 
         self.observation_space = gym.spaces.Dict(
             {
@@ -58,10 +59,14 @@ class CelesteEnv(gym.Env):
         logging.debug("Resetting environment")
 
         self._options = options
+        
+        if options and "reward_mode" in options and options["reward_mode"] == "delta":
+            self._use_delta_dist = True
+        else:
+            self._use_delta_dist = False
 
-        # Perform keyboard sequence to restart chapter
+        # Clear keyboard state
         self._celeste_inputs.reset_keyboard()
-        # self._celeste_inputs.restart_chapter_celeste() TODO: Restart chapter more elegantly
 
         self._steps = 0
 
@@ -75,6 +80,7 @@ class CelesteEnv(gym.Env):
 
         self._starting_distance = info["distance"] if info["distance"] is not None else float('999999')
         self._best_distance = self._starting_distance
+        self._prev_distance = self._starting_distance
 
         # DEBUG: Write JSON data to file
         with open("debug.json", "w") as f:
@@ -85,7 +91,7 @@ class CelesteEnv(gym.Env):
     def step(self, action):        
         # Perform desired action by updating keyboard state
         self._celeste_inputs = CelesteInputs.from_action(action)
-        self._celeste_inputs.update_keyboard()
+        # self._celeste_inputs.update_keyboard()
 
         # Request the game state
         observation = self._get_obs()
@@ -104,13 +110,16 @@ class CelesteEnv(gym.Env):
         # Reward is inversely proportional to distance from target
         distance = info["distance"] if info["distance"] is not None else float('inf')
         
-        # Keep track of the best distance to the target. If it improves, update the reward
-        if self._best_distance is None or distance < self._best_distance:
-            reward = self._best_distance - distance
-            self._best_distance = distance
-            logging.debug(f"New best distance: {self._best_distance:.2f}")
+        if self._use_delta_dist:
+            reward = -info["distance_gain"]
         else:
-            reward = 0
+            # Keep track of the best distance to the target. If it improves, update the reward
+            if self._best_distance is None or distance < self._best_distance:
+                reward = self._best_distance - distance
+                self._best_distance = distance
+                logging.debug(f"New best distance: {self._best_distance:.2f}")
+            else:
+                reward = 0
 
         # Big reward for making it to the next room
         if info is not None and "nextRoom" in info and info["nextRoom"]:
@@ -127,7 +136,9 @@ class CelesteEnv(gym.Env):
 
         self._steps += 1
 
+
         logging.debug(f"Finished step {self._steps}")
+        self._prev_distance = distance
 
         return observation, reward, terminated, truncated, info
 
@@ -175,11 +186,17 @@ class CelesteEnv(gym.Env):
             dict: Info with distance between agent and target
         """
         if self._json_data is not None:
-            return {
-                "distance": np.linalg.norm(
+            distance = np.linalg.norm(
                     np.array([self._json_data["playerXPosition"], self._json_data["playerYPosition"]], dtype=np.float32) -
                     np.array([self._json_data["targetXPosition"], self._json_data["targetYPosition"]], dtype=np.float32)
-                ),
+            )
+            if self._prev_distance:
+                distance_gain = self._prev_distance - distance
+            else:
+                distance_gain = 0.0
+            return {
+                "distance": distance,
+                "distance_gain": distance_gain,
                 "steps": self._steps,
                 "playerDied": self._json_data["playerDied"] if "playerDied" in self._json_data else False,
                 "nextRoom": self._json_data["nextRoom"] if "nextRoom" in self._json_data else False
