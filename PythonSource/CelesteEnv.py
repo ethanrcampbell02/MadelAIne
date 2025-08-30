@@ -73,7 +73,7 @@ class CelesteEnv(gym.Env):
     def step(self, action):        
         # Perform desired action by updating keyboard state
         self._celeste_inputs = CelesteInputs.from_action(action)
-        self._celeste_inputs.update_keyboard()
+        # self._celeste_inputs.update_keyboard()
 
         # Request the game state
         observation = self._get_obs()
@@ -108,10 +108,10 @@ class CelesteEnv(gym.Env):
 
         # Penalize if died
         if info is not None and "playerDied" in info and info["playerDied"]:
-            reward = reward - 50.0
+            reward = reward - 20.0
 
         # Penalize for each step taken
-        reward = reward - 0.5
+        reward = reward - 0.3
 
         self._steps += 1
 

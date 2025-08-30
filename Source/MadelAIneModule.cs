@@ -31,7 +31,9 @@ public class MadelAIneModule : EverestModule
     public override Type SaveDataType => typeof(MadelAIneModuleSaveData);
     public static MadelAIneModuleSaveData SaveData => (MadelAIneModuleSaveData)Instance._SaveData;
 
+    private Player LastPlayer = null;
     private string LastRoomName = null;
+    private bool ResetRequested = false;
     private TcpClient tcpClient = null;
     private NetworkStream tcpStream = null;
 
@@ -46,10 +48,12 @@ public class MadelAIneModule : EverestModule
     {
         Logger.Log(nameof(MadelAIneModule), $"Loading MadelAIne");
         On.Celeste.Level.Render += Level_Render;
+        On.Monocle.Engine.Update += Engine_Update;
     }
 
     public override void Unload()
     {
+        On.Monocle.Engine.Update -= Engine_Update;
         On.Celeste.Level.Render -= Level_Render;
         if (tcpStream != null)
         {
@@ -63,14 +67,21 @@ public class MadelAIneModule : EverestModule
         }
     }
 
+    public void Engine_Update(On.Monocle.Engine.orig_Update orig, Engine self, GameTime gameTime) {
+        orig(self, gameTime);
+
+        if (Engine.Scene is Level level && !level.Transitioning && ResetRequested) {
+            ResetGameState();
+        }
+    }
+
     private void Level_Render(On.Celeste.Level.orig_Render orig, Level self)
     {
         orig(self);
 
-        if (!Settings.EnableMadelAIne || self.Paused || self.Transitioning) return;
+        if (!Settings.EnableMadelAIne || self.Paused || ResetRequested) return;
 
         Player player = self.Tracker.GetEntity<Player>();
-        if (player == null) return;
 
         // Update the game state with the player's position and other relevant data
         GameState state = GetState(player, self);
@@ -81,19 +92,25 @@ public class MadelAIneModule : EverestModule
         if (!success) return;
 
         // Receive the response from the server, reset state if requested.
-        bool reset = ReceiveResponse();
-        if (reset) ResetGameState();
+        ResetRequested = ReceiveResponse();
 
     }
 
     private GameState GetState(Player player, Level level)
     {
-        if (player == null || level == null) return null;
+        if (level == null) return null;
+
+        if (player == null) {
+            if (LastPlayer == null) return null;
+            player = LastPlayer;
+        }
+        LastPlayer = player;
 
         Vector2 pos = player.ExactPosition;
 
         string debugRoomName = level.Session.Level;
         bool reachedNextRoom = LastRoomName != null && LastRoomName != debugRoomName;
+        LastRoomName = debugRoomName;
 
         RenderTarget2D target = GameplayBuffers.Level.Target;
         Color[] pixels = new Color[target.Width * target.Height];
@@ -126,7 +143,6 @@ public class MadelAIneModule : EverestModule
 
     private void ResetGameState()
     {
-        LastRoomName = null;
 
         // Load Celeste/1-ForsakenCity room 1
         if (!(Engine.Scene is Level)) return;
@@ -134,14 +150,14 @@ public class MadelAIneModule : EverestModule
         Player player = level.Tracker.GetEntity<Player>();
         if (player == null)
         {
-            // Player is currently dead, just reload the room
-            level.Reload();
+            if (LastPlayer == null) return;
+            player = LastPlayer;
         }
-        else
-        {
-            // Player is alive, reset back to room 1
-            level.TeleportTo(player, "1", Player.IntroTypes.Respawn);
-        }
+        level.TeleportTo(player, "1", Player.IntroTypes.Respawn);
+
+        LastPlayer = null;
+        LastRoomName = null;
+        ResetRequested = false;
     }
     
     private bool SendGameState(GameState state)
@@ -228,9 +244,9 @@ public class MadelAIneModule : EverestModule
                 return false;
             }
         }
-        catch (JsonException)
+        catch (Exception ex)
         {
-            Logger.Error(nameof(MadelAIneModule), "Invalid JSON response from Python client.");
+            Logger.Error(nameof(MadelAIneModule), $"Error receiving response from Python client: {ex.Message}");
             return false;
         }
     }
