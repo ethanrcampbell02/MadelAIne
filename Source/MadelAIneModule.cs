@@ -7,6 +7,7 @@ using System.Net.Sockets;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Xna.Framework.Graphics;
 
 /* Note: Several code snippets used to calculate the current state have been adapted
    from viddie's Physics Inspector in the Consistency Tracker mod.
@@ -30,12 +31,7 @@ public class MadelAIneModule : EverestModule
     public override Type SaveDataType => typeof(MadelAIneModuleSaveData);
     public static MadelAIneModuleSaveData SaveData => (MadelAIneModuleSaveData)Instance._SaveData;
 
-    private Player LastPlayer = null;
-    private Vector2 LastExactPos = Vector2.Zero;
     private string LastRoomName = null;
-    private bool PlayerDied = false;
-    private bool ReachedNextRoom = false;
-    private List<int[]> SolidTileData = null;
     private TcpClient tcpClient = null;
     private NetworkStream tcpStream = null;
 
@@ -49,15 +45,12 @@ public class MadelAIneModule : EverestModule
     public override void Load()
     {
         Logger.Log(nameof(MadelAIneModule), $"Loading MadelAIne");
-
-        // UDP client removed for SendGameState
-        // TCP client will be created in SendGameState as needed
-        On.Monocle.Engine.Update += Engine_Update;
+        On.Celeste.Level.Render += Level_Render;
     }
 
     public override void Unload()
     {
-        On.Monocle.Engine.Update -= Engine_Update;
+        On.Celeste.Level.Render -= Level_Render;
         if (tcpStream != null)
         {
             tcpStream.Close();
@@ -70,108 +63,70 @@ public class MadelAIneModule : EverestModule
         }
     }
 
-    private void Engine_Update(On.Monocle.Engine.orig_Update orig, Engine self, GameTime gameTime)
+    private void Level_Render(On.Celeste.Level.orig_Render orig, Level self)
     {
-        orig(self, gameTime);
+        orig(self);
 
-        if (Engine.Scene is Level level && Settings.EnableMadelAIne && !level.Paused)
-        {
-            Player player = level.Tracker.GetEntity<Player>();
-            UpdateState(player, level);
-        }
+        if (!Settings.EnableMadelAIne || self.Paused || self.Transitioning) return;
+
+        Player player = self.Tracker.GetEntity<Player>();
+        if (player == null) return;
+
+        // Update the game state with the player's position and other relevant data
+        GameState state = GetState(player, self);
+        if (state == null) return;
+
+        // Send the game state to the server
+        bool success = SendGameState(state);
+        if (!success) return;
+
+        // Receive the response from the server, reset state if requested.
+        bool reset = ReceiveResponse();
+        if (reset) ResetGameState();
+
     }
 
-    private void UpdateState(Player player, Level level)
+    private GameState GetState(Player player, Level level)
     {
-        if (player == null)
-        {
-            if (LastPlayer == null) return;
-            player = LastPlayer;
-        }
-        LastPlayer = player;
+        if (player == null || level == null) return null;
 
         Vector2 pos = player.ExactPosition;
 
-        Vector2 velocity = Vector2.Zero;
-        if (LastExactPos != Vector2.Zero)
+        string debugRoomName = level.Session.Level;
+        bool reachedNextRoom = LastRoomName != null && LastRoomName != debugRoomName;
+
+        RenderTarget2D target = GameplayBuffers.Level.Target;
+        Color[] pixels = new Color[target.Width * target.Height];
+        target.GetData(pixels);
+        byte[] pixelBytes = new byte[pixels.Length * 4];
+        for (int i = 0; i < pixels.Length; i++)
         {
-            velocity = pos - LastExactPos;
+            pixelBytes[i * 4 + 0] = pixels[i].R;
+            pixelBytes[i * 4 + 1] = pixels[i].G;
+            pixelBytes[i * 4 + 2] = pixels[i].B;
+            pixelBytes[i * 4 + 3] = pixels[i].A;
         }
+        string base64String = Convert.ToBase64String(pixelBytes);
 
-        LastExactPos = pos;
-
-        // Check if player died during this step
-        bool playerDiedThisStep = false;
-        if (player.Dead && !PlayerDied)
-        {
-            PlayerDied = true;
-            playerDiedThisStep = true;
-        }
-
-        UpdateRoomLayout();
-
-        // Update the game state
         GameState state = new GameState
         {
             PlayerXPosition = pos.X,
             PlayerYPosition = pos.Y,
-            PlayerXVelocity = velocity.X,
-            PlayerYVelocity = velocity.Y,
-            PlayerCanDash = player.CanDash,
-            PlayerStamina = player.Stamina,
-            PlayerDied = playerDiedThisStep,
-            NextRoom = ReachedNextRoom,
+            PlayerDied = player.Dead,
+            PlayerReachedNextRoom = reachedNextRoom,
             TargetXPosition = 264f,               // FIXME: Currently hardcoded to second room of 1A
             TargetYPosition = -24f,               // FIXME: Currently hardcoded to second room of 1A
-            SolidTileData = SolidTileData
+            ScreenWidth = target.Width,
+            ScreenHeight = target.Height,
+            ScreenPixelsBase64 = base64String
         };
 
-        SendGameState(state);
-    }
-
-    private void UpdateRoomLayout()
-    {
-        if (!(Engine.Scene is Level)) return;
-        Level level = (Level)Engine.Scene;
-
-        string debugRoomName = level.Session.Level;
-        //If we are in the same room as last frame
-        if (LastRoomName != null && LastRoomName == debugRoomName) return;
-        if (LastRoomName != null && LastRoomName != debugRoomName)
-        {
-            ReachedNextRoom = true;
-        }
-        
-        LastRoomName = debugRoomName;
-
-        Logger.Info(nameof(MadelAIneModule), $"Entered new room: '{debugRoomName}'");
-
-        int offsetX = level.LevelSolidOffset.X;
-        int offsetY = level.LevelSolidOffset.Y;
-        int width = (int)Math.Ceiling(level.Bounds.Width / 8f);
-        int height = (int)Math.Ceiling(level.Bounds.Height / 8f);
-        SolidTileData = new List<int[]>();
-        for (int y = 0; y < height; y++)
-        {
-            int[] row = new int[width];
-            string line = "";
-            for (int x = 0; x < width; x++)
-            {
-                row[x] = level.SolidTiles.Grid.Data[x + offsetX, y + offsetY] ? 1 : 0;
-                line += row[x] == 1 ? "1" : " ";
-            }
-            SolidTileData.Add(row);
-        }
+        return state;
     }
 
     private void ResetGameState()
     {
-        LastPlayer = null;
-        LastExactPos = Vector2.Zero;
-        PlayerDied = false;
-        ReachedNextRoom = false;
         LastRoomName = null;
-        SolidTileData = new List<int[]>();
 
         // Load Celeste/1-ForsakenCity room 1
         if (!(Engine.Scene is Level)) return;
@@ -188,7 +143,8 @@ public class MadelAIneModule : EverestModule
             level.TeleportTo(player, "1", Player.IntroTypes.Respawn);
         }
     }
-    private void SendGameState(GameState state)
+    
+    private bool SendGameState(GameState state)
     {
         // Send the game state to the Python client using TCP
         string json = JsonSerializer.Serialize(state);
@@ -219,12 +175,7 @@ public class MadelAIneModule : EverestModule
 
             tcpStream.Write(data, 0, data.Length);
 
-            bool reset = ReceiveResponse();
-
-            if (reset)
-            {
-                ResetGameState();
-            }
+            return true;
         }
         catch (Exception ex)
         {
@@ -241,17 +192,20 @@ public class MadelAIneModule : EverestModule
                 tcpClient = null;
             }
             Settings.EnableMadelAIne = false;
+
+            return false;
         }
     }
 
     private bool ReceiveResponse()
     {
         Logger.Debug(nameof(MadelAIneModule), "Waiting for ACK...");
-        byte[] buffer = new byte[1024];
-        int bytesRead = tcpStream.Read(buffer, 0, buffer.Length);
-        string response = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim('\0');
         try
         {
+            byte[] buffer = new byte[1024];
+            int bytesRead = tcpStream.Read(buffer, 0, buffer.Length);
+            string response = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim('\0');
+
             using var doc = JsonDocument.Parse(response);
             if (!doc.RootElement.TryGetProperty("type", out var typeProp))
             {
@@ -276,7 +230,7 @@ public class MadelAIneModule : EverestModule
         }
         catch (JsonException)
         {
-            Logger.Error(nameof(MadelAIneModule), $"Invalid JSON response from Python client: {response}");
+            Logger.Error(nameof(MadelAIneModule), "Invalid JSON response from Python client.");
             return false;
         }
     }

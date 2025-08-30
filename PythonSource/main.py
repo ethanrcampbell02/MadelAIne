@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from MadelAIneAgent import MadelAIneAgent
 
 from CelesteEnv import CelesteEnv
+from wrappers import apply_wrappers
 
 import os
 import gymnasium as gym
@@ -19,8 +20,8 @@ from tqdm import tqdm
 
 SHOULD_TRAIN = True
 CKPT_SAVE_INTERVAL = 1000
-NUM_OF_EPISODES = 10000
-TRAIN_FROM_CKPT = True
+NUM_OF_EPISODES = 100000
+TRAIN_FROM_CKPT = False
 
 class TqdmLoggingHandler(logging.Handler):
     def __init__(self, level=logging.NOTSET):
@@ -53,21 +54,22 @@ else:
     print("CUDA is not available")
 
 env = CelesteEnv()
+env = apply_wrappers(env)
 
-input_dims = gym.spaces.utils.flatdim(env.observation_space)
+input_dims = env.observation_space.shape
 num_actions = 2 ** env.action_space.n
-agent = MadelAIneAgent(input_dims=input_dims, num_actions=num_actions)
+agent = MadelAIneAgent(input_dims=input_dims, num_actions=num_actions, epsilon=1.0, eps_min=0.1, eps_decay=0.9999995)
 
 if not SHOULD_TRAIN:
-    folder_name = "2025-08-27-23_59_18"
-    ckpt_name = "model_7000_iter.pt"
+    folder_name = ""
+    ckpt_name = ""
     agent.load_model(os.path.join("models", folder_name, ckpt_name))
     agent.epsilon = 0.01
     agent.eps_min = 0.0
     agent.eps_decay = 0.0
 elif TRAIN_FROM_CKPT:
-    folder_name = "2025-08-27-23_59_18"
-    ckpt_name = "model_7000_iter.pt"
+    folder_name = ""
+    ckpt_name = ""
     agent.load_model(os.path.join("models", folder_name, ckpt_name))
     agent.epsilon = 0.5
     agent.eps_min = 0.01
@@ -79,11 +81,10 @@ episode_losses = []
 for i in trange(NUM_OF_EPISODES, desc="Training Episodes"):
     done = False
     state, _ = env.reset()
-    state_flatten = gym.spaces.utils.flatten(env.observation_space, state)
     total_reward = 0
     batch_losses = []
     while not done:
-        a = agent.choose_action(state_flatten)
+        a = agent.choose_action(state)
         action_multi_binary = [int(x) for x in format(a, f'0{env.action_space.n}b')]
         action = np.array(action_multi_binary, dtype=np.float32)
 
@@ -91,15 +92,13 @@ for i in trange(NUM_OF_EPISODES, desc="Training Episodes"):
         done = terminated or truncated
         total_reward += reward
 
-        new_state_flatten = gym.spaces.utils.flatten(env.observation_space, new_state)
-
         if SHOULD_TRAIN:
-            agent.store_in_memory(state_flatten, a, reward, new_state_flatten, done)
+            agent.store_in_memory(state, a, reward, new_state, done)
             loss = agent.learn()
             if loss is not None:
                 batch_losses.append(loss)
 
-        state_flatten = new_state_flatten
+        state = new_state
 
     avg_loss = np.mean(batch_losses) if batch_losses else None
     episode_rewards.append(total_reward)

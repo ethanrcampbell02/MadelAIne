@@ -47,8 +47,8 @@ class MadelAIneAgent:
         if np.random.random() < self.epsilon:
             return np.random.randint(self.num_actions)
         observation = torch.tensor(observation, dtype=torch.float32) \
-                .unsqueeze(0) \
-                .to(self.online_network.device)
+                        .unsqueeze(0) \
+                        .to(self.online_network.device)
         # Grabbing the index of the action that's associated with the highest Q-value
         return self.online_network(observation).argmax().item()
     

@@ -1,11 +1,9 @@
+import base64
 import socket
 import json
-import pynput.keyboard
 import numpy as np
-import time
 from typing import Optional
 import logging
-
 from CelesteInputs import CelesteInputs
 import gymnasium as gym
 
@@ -15,7 +13,7 @@ class CelesteEnv(gym.Env):
 
     TCP_IP = "127.0.0.1"
     TCP_PORT = 5000
-    BUFFER_SIZE = 4096
+    BUFFER_SIZE = 2**19
 
     def __init__(self):
         super().__init__()
@@ -35,16 +33,7 @@ class CelesteEnv(gym.Env):
 
         self._steps = 0
 
-        self.observation_space = gym.spaces.Dict(
-            {
-            "playerPosition": gym.spaces.Box(low=-np.inf, high=np.inf, shape=(2,), dtype=np.float32),
-            "playerVelocity": gym.spaces.Box(low=-np.inf, high=np.inf, shape=(2,), dtype=np.float32),
-            "playerCanDash": gym.spaces.Box(low=0, high=1, shape=(1,), dtype=np.bool),
-            "playerStamina": gym.spaces.Box(low=0, high=np.inf, shape=(1,), dtype=np.float32),
-            "targetPosition": gym.spaces.Box(low=-np.inf, high=np.inf, shape=(2,), dtype=np.float32),
-            "roomTileData": gym.spaces.MultiBinary((23, 40))
-            }
-        )
+        self.observation_space = gym.spaces.Box(low=0, high=255, shape=(180, 320, 3), dtype=np.uint8)
 
         self.action_space = gym.spaces.MultiBinary(7)  # up, down, left, right, jump, dash, grab
 
@@ -61,7 +50,6 @@ class CelesteEnv(gym.Env):
 
         # Perform keyboard sequence to restart chapter
         self._celeste_inputs.reset_keyboard()
-        # self._celeste_inputs.restart_chapter_celeste() TODO: Restart chapter more elegantly
 
         self._steps = 0
 
@@ -73,7 +61,7 @@ class CelesteEnv(gym.Env):
         observation = self._get_obs()
         info = self._get_info()
 
-        self._starting_distance = info["distance"] if info["distance"] is not None else float('999999')
+        self._starting_distance = info["distance"] if info["distance"] is not None else 500.0
         self._best_distance = self._starting_distance
 
         # DEBUG: Write JSON data to file
@@ -96,8 +84,8 @@ class CelesteEnv(gym.Env):
         if terminated:
             logging.debug("Episode terminated: player died")
 
-        # Truncate after 30 seconds
-        truncated = self._steps >= 1800
+        # Truncate after 15 seconds
+        truncated = self._steps >= 900
         if truncated:
             logging.debug("Episode truncated: time limit reached")
 
@@ -113,17 +101,17 @@ class CelesteEnv(gym.Env):
             reward = 0
 
         # Big reward for making it to the next room
-        if info is not None and "nextRoom" in info and info["nextRoom"]:
+        if info is not None and "playerReachedNextRoom" in info and info["playerReachedNextRoom"]:
             reward = reward + 50.0
             terminated = True
             logging.debug("Episode terminated: reached next room")
 
         # Penalize if died
         if info is not None and "playerDied" in info and info["playerDied"]:
-            reward = reward - 10.0
+            reward = reward - 50.0
 
         # Penalize for each step taken
-        reward = reward - 0.1
+        reward = reward - 0.5
 
         self._steps += 1
 
@@ -157,17 +145,21 @@ class CelesteEnv(gym.Env):
         if self._json_data is None:
             return None
 
-        observation = {
-            "playerPosition": np.array([self._json_data["playerXPosition"], self._json_data["playerYPosition"]], dtype=np.float32),
-            "playerVelocity": np.array([self._json_data["playerXVelocity"], self._json_data["playerYVelocity"]], dtype=np.float32),
-            "playerCanDash": np.array([self._json_data["playerCanDash"]], dtype=np.bool),
-            "playerStamina": np.array([self._json_data["playerStamina"]], dtype=np.float32),
-            "targetPosition": np.array([self._json_data["targetXPosition"], self._json_data["targetYPosition"]], dtype=np.float32),
-            "roomTileData": np.array(self._json_data["solidTileData"], dtype=np.bool)
-        }
+        img_base64 = self._json_data["screenPixelsBase64"] if "screenPixelsBase64" in self._json_data else None
+        width = self._json_data["screenWidth"] if "screenWidth" in self._json_data else 320
+        height = self._json_data["screenHeight"] if "screenHeight" in self._json_data else 180
+        if img_base64 is not None:
+            observation = self._parse_image_base64(img_base64, width, height)
+        else:
+            observation = None
 
         return observation
-    
+
+    @staticmethod
+    def _parse_image_base64(img_base64, width, height):
+        img_data = base64.b64decode(img_base64)
+        return np.frombuffer(img_data, dtype=np.uint8).reshape((height, width, 4))[:,:,:3]
+
     def _get_info(self):
         """Compute auxiliary information for debugging.
         
@@ -182,7 +174,7 @@ class CelesteEnv(gym.Env):
                 ),
                 "steps": self._steps,
                 "playerDied": self._json_data["playerDied"] if "playerDied" in self._json_data else False,
-                "nextRoom": self._json_data["nextRoom"] if "nextRoom" in self._json_data else False
+                "playerReachedNextRoom": self._json_data["playerReachedNextRoom"] if "playerReachedNextRoom" in self._json_data else False
             }
         else:
             return None
