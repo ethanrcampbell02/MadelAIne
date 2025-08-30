@@ -18,9 +18,9 @@ import numpy as np
 import logging
 from tqdm import tqdm
 
-SHOULD_TRAIN = True
+SHOULD_TRAIN = False
 CKPT_SAVE_INTERVAL = 1000
-NUM_OF_EPISODES = 100000
+NUM_OF_EPISODES = 90000
 TRAIN_FROM_CKPT = False
 
 class TqdmLoggingHandler(logging.Handler):
@@ -58,22 +58,22 @@ env = apply_wrappers(env)
 
 input_dims = env.observation_space.shape
 num_actions = 2 ** env.action_space.n
-agent = MadelAIneAgent(input_dims=input_dims, num_actions=num_actions, epsilon=1.0, eps_min=0.1, eps_decay=0.9999995)
+agent = MadelAIneAgent(input_dims=input_dims, num_actions=num_actions, epsilon=1.0, eps_min=0.1, eps_decay=0.999999)
 
 if not SHOULD_TRAIN:
-    folder_name = ""
-    ckpt_name = ""
+    folder_name = "2025-08-30-10_02_46"
+    ckpt_name = "model_5000_iter.pt"
     agent.load_model(os.path.join("models", folder_name, ckpt_name))
-    agent.epsilon = 0.01
+    agent.epsilon = 0.05
     agent.eps_min = 0.0
     agent.eps_decay = 0.0
 elif TRAIN_FROM_CKPT:
-    folder_name = ""
-    ckpt_name = ""
+    folder_name = "2025-08-30-01_32_35"
+    ckpt_name = "model_5000_iter.pt"
     agent.load_model(os.path.join("models", folder_name, ckpt_name))
-    agent.epsilon = 0.5
+    agent.epsilon = 0.7
     agent.eps_min = 0.01
-    agent.eps_decay = 0.99999950
+    agent.eps_decay = 0.999999
 
 episode_rewards = []
 episode_losses = []

@@ -125,22 +125,29 @@ class CelesteEnv(gym.Env):
             with open("debug.json", "r") as f:
                 self._json_data = json.load(f)
         else:
-            try:
-                data = self._conn.recv(self.BUFFER_SIZE)
-                if not data:
-                    self._json_data = None
-                else:
+            data = b""
+            max_receipts = 5
+            for attempt in range(max_receipts):
+                try:
+                    chunk = self._conn.recv(self.BUFFER_SIZE)
+                    if not chunk:
+                        break
+                    data += chunk
                     try:
                         self._json_data = json.loads(data.decode('utf-8'))
                         # Send ACK after successful receipt
                         ack_msg = json.dumps({"type": "ACK"}).encode('utf-8')
                         self._conn.sendall(ack_msg)
+                        break
                     except json.JSONDecodeError:
-                        logging.warning(f"Received invalid JSON from {self._addr}: {data}")
-                        self._json_data = None
-            except Exception as e:
-                logging.error(f"Error receiving data: {e}")
-                self._json_data = None
+                        if attempt == max_receipts - 1:
+                            truncated_data = data[:200] + b' ... ' + data[-200:] if len(data) > 400 else data
+                            logging.warning(f"Received invalid JSON after {max_receipts} attempts from {self._addr}: {truncated_data}")
+                            self._json_data = None
+                except Exception as e:
+                    logging.error(f"Error receiving data: {e}")
+                    self._json_data = None
+                    break
 
         if self._json_data is None:
             return None
