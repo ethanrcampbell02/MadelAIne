@@ -73,7 +73,7 @@ class CelesteEnv(gym.Env):
     def step(self, action):        
         # Perform desired action by updating keyboard state
         self._celeste_inputs = CelesteInputs.from_action(action)
-        # self._celeste_inputs.update_keyboard()
+        self._celeste_inputs.update_keyboard()
 
         # Request the game state
         observation = self._get_obs()
