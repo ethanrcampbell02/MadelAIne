@@ -32,15 +32,6 @@ class CelesteInputs:
         self.grab = False
         self.update_keyboard()
 
-    def restart_chapter_celeste(self):
-        keyboard = pynput.keyboard.Controller()
-        keyboard.press(pynput.keyboard.KeyCode.from_char('r'))
-        time.sleep(0.1)
-        keyboard.release(pynput.keyboard.KeyCode.from_char('r'))
-        keyboard.press(pynput.keyboard.KeyCode.from_char('d'))
-        time.sleep(0.1)
-        keyboard.release(pynput.keyboard.KeyCode.from_char('d'))
-
     def to_action(self):
         return [
             int(self.up),

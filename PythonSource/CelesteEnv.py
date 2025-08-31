@@ -15,8 +15,10 @@ class CelesteEnv(gym.Env):
     TCP_PORT = 5000
     BUFFER_SIZE = 2**19
 
-    def __init__(self):
+    def __init__(self, reward_mode="best"):
         super().__init__()
+
+        self.reward_mode = reward_mode
 
         self._server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -62,6 +64,7 @@ class CelesteEnv(gym.Env):
         info = self._get_info()
 
         self._starting_distance = info["distance"] if info["distance"] is not None else 500.0
+        self._prev_distance = self._starting_distance
         self._best_distance = self._starting_distance
 
         # DEBUG: Write JSON data to file
@@ -89,16 +92,24 @@ class CelesteEnv(gym.Env):
         if truncated:
             logging.debug("Episode truncated: time limit reached")
 
-        # Reward is inversely proportional to distance from target
+        reward = 0
+
         distance = info["distance"] if info["distance"] is not None else float('inf')
-        
-        # Keep track of the best distance to the target. If it improves, update the reward
-        if self._best_distance is None or distance < self._best_distance:
-            reward = self._best_distance - distance
+
+        # Compute the reward differently depending on reward mode
+        if self.reward_mode == "prev":
+            reward += self._prev_distance - distance
+        elif self.reward_mode == "prev_positive":
+            if distance < self._prev_distance:
+                reward += self._prev_distance - distance
+        elif self.reward_mode == "best":
+            if distance < self._best_distance:
+                reward += self._best_distance - distance
+
+        # Update previous and best distances
+        self._prev_distance = distance
+        if distance < self._best_distance:
             self._best_distance = distance
-            logging.debug(f"New best distance: {self._best_distance:.2f}")
-        else:
-            reward = 0
 
         # Big reward for making it to the next room
         if info is not None and "playerReachedNextRoom" in info and info["playerReachedNextRoom"]:
@@ -111,7 +122,7 @@ class CelesteEnv(gym.Env):
             reward = reward - 20.0
 
         # Penalize for each step taken
-        reward = reward - 0.3
+        reward = reward - 0.2
 
         self._steps += 1
 
@@ -168,11 +179,6 @@ class CelesteEnv(gym.Env):
         return np.frombuffer(img_data, dtype=np.uint8).reshape((height, width, 4))[:,:,:3]
 
     def _get_info(self):
-        """Compute auxiliary information for debugging.
-        
-        Returns:
-            dict: Info with distance between agent and target
-        """
         if self._json_data is not None:
             return {
                 "distance": np.linalg.norm(
