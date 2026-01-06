@@ -51,7 +51,13 @@ class MadelAIneAgent:
                         .to(self.online_network.device)
         # Grabbing the index of the action that's associated with the highest Q-value
         return self.online_network(observation).argmax().item()
-    
+
+    def predict_max_q(self, observation):
+        observation = torch.tensor(observation, dtype=torch.float32) \
+                        .unsqueeze(0) \
+                        .to(self.online_network.device)
+        return self.online_network(observation).max().item()
+
     def decay_epsilon(self):
         self.epsilon = max(self.epsilon * self.eps_decay, self.eps_min)
 
