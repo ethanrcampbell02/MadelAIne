@@ -12,11 +12,11 @@ from wrappers import apply_wrappers
 from utils import *
 
 SAVE_METRICS_INTERVAL = 10
-SAVE_MODEL_AFTER_EPOCH = True
+SAVE_MODEL_AFTER_EPOCH = False
 SHOULD_TRAIN = True
 NUM_OF_EPOCHS = 100
-TRAINING_EPISODES_PER_EPOCH = 1000
-VALIDATION_EPISODES_PER_EPOCH = 100
+TRAINING_EPISODES_PER_EPOCH = 10
+VALIDATION_EPISODES_PER_EPOCH = 10
 
 TRAIN_FROM_CKPT = False
 
@@ -46,7 +46,7 @@ else:
     print("CUDA is not available")
     
 # Load holdout states for max Q-value prediction
-holdout_states = np.load("holdouts\\20250831_113343_holdouts.npy")
+holdout_states = np.load("holdouts\\20260106_224217_holdouts.npy")
 
 # Set up plots with separate subplots for reward, loss, and max Q-values
 plt.ion()
@@ -96,7 +96,7 @@ env = CelesteEnv()
 env = apply_wrappers(env)
 
 input_dims = env.observation_space.shape
-num_actions = 2 ** env.action_space.n
+num_actions = env.action_space.n  # Now using Discrete space, so just .n (not 2^n)
 agent = MadelAIneAgent(input_dims=input_dims, num_actions=num_actions, epsilon=1.0, eps_min=0.1, eps_decay=0.9999995, replay_buffer_capacity=20000)
 
 folder_name = "2025-08-30-10_02_46"
@@ -133,15 +133,13 @@ for epoch in trange(NUM_OF_EPOCHS, desc="Epochs"):
             batch_losses = []
 
             while not done:
-                a = agent.choose_action(state)
-                action_multi_binary = [int(x) for x in format(a, f'0{env.action_space.n}b')]
-                action = np.array(action_multi_binary, dtype=np.float32)
+                action = agent.choose_action(state)  # Now action is already discrete (0-4)
 
                 new_state, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
                 total_reward += reward
 
-                agent.store_in_memory(state, a, reward, new_state, done)
+                agent.store_in_memory(state, action, reward, new_state, done)
                 loss = agent.learn()
                 if loss is not None:
                     batch_losses.append(loss)
@@ -169,9 +167,7 @@ for epoch in trange(NUM_OF_EPOCHS, desc="Epochs"):
         agent.eps_min = 0.0
 
         while not done:
-            a = agent.choose_action(state)
-            action_multi_binary = [int(x) for x in format(a, f'0{env.action_space.n}b')]
-            action = np.array(action_multi_binary, dtype=np.float32)
+            action = agent.choose_action(state)  # Now action is already discrete (0-4)
 
             new_state, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated

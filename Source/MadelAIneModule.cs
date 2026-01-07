@@ -154,8 +154,8 @@ public class MadelAIneModule : EverestModule
             PlayerYPosition = pos.Y,
             PlayerDied = player.Dead,
             PlayerReachedNextRoom = reachedNextRoom,
-            TargetXPosition = 264f,               // FIXME: Currently hardcoded to second room of 1A
-            TargetYPosition = -24f,               // FIXME: Currently hardcoded to second room of 1A
+            TargetXPosition = 408f,               // FIXME: Currently hardcoded to second room of prologue
+            TargetYPosition = 150,               // FIXME: Currently hardcoded to second room of prologue
             ScreenWidth = target.Width,
             ScreenHeight = target.Height,
             ScreenPixelsBase64 = base64String
@@ -176,7 +176,7 @@ public class MadelAIneModule : EverestModule
             if (LastPlayer == null) return;
             player = LastPlayer;
         }
-        level.TeleportTo(player, "1", Player.IntroTypes.Respawn);
+        level.TeleportTo(player, "0", Player.IntroTypes.Respawn);
 
         LastPlayer = null;
         LastRoomName = null;
