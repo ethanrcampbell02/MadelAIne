@@ -36,6 +36,7 @@ public class MadelAIneModule : EverestModule
     private bool ResetRequested = false;
     private TcpClient tcpClient = null;
     private NetworkStream tcpStream = null;
+    private bool lastCalledWasUpdate = false;
 
 
     public MadelAIneModule()
@@ -47,14 +48,16 @@ public class MadelAIneModule : EverestModule
     public override void Load()
     {
         Logger.Log(nameof(MadelAIneModule), $"Loading MadelAIne");
-        On.Celeste.Level.Render += Level_Render;
+        On.Monocle.Engine.Draw += Engine_Draw;
         On.Monocle.Engine.Update += Engine_Update;
+        On.Celeste.Level.Render += Level_Render;
     }
 
     public override void Unload()
     {
-        On.Monocle.Engine.Update -= Engine_Update;
         On.Celeste.Level.Render -= Level_Render;
+        On.Monocle.Engine.Update -= Engine_Update;
+        On.Monocle.Engine.Draw -= Engine_Draw;
         if (tcpStream != null)
         {
             tcpStream.Close();
@@ -68,10 +71,31 @@ public class MadelAIneModule : EverestModule
     }
 
     public void Engine_Update(On.Monocle.Engine.orig_Update orig, Engine self, GameTime gameTime) {
-        orig(self, gameTime);
+        if (!Settings.EnableMadelAIne) {
+            orig(self, gameTime);
+            return;
+        }
 
-        if (Engine.Scene is Level level && !level.Transitioning && ResetRequested) {
-            ResetGameState();
+        if (!lastCalledWasUpdate) {
+            if (Engine.Scene is Level level && !level.Transitioning && ResetRequested) {
+                ResetGameState();   
+            }
+
+            orig(self, gameTime);
+            lastCalledWasUpdate = true;
+        }
+    }
+
+    private void Engine_Draw(On.Monocle.Engine.orig_Draw orig, Monocle.Engine engine, GameTime gameTime)
+    {
+        if (!Settings.EnableMadelAIne) {
+            orig(engine, gameTime);
+            return;
+        }
+
+        if (lastCalledWasUpdate) {
+            orig(engine, gameTime);
+            lastCalledWasUpdate = false;
         }
     }
 
@@ -93,7 +117,6 @@ public class MadelAIneModule : EverestModule
 
         // Receive the response from the server, reset state if requested.
         ResetRequested = ReceiveResponse();
-
     }
 
     private GameState GetState(Player player, Level level)
