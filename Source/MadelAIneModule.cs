@@ -8,6 +8,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Xna.Framework.Graphics;
+using DeepCopy;
 
 /* Note: Several code snippets used to calculate the current state have been adapted
    from viddie's Physics Inspector in the Consistency Tracker mod.
@@ -37,6 +38,7 @@ public class MadelAIneModule : EverestModule
     private TcpClient tcpClient = null;
     private NetworkStream tcpStream = null;
     private bool lastCalledWasUpdate = false;
+    private Session savedSession = null;
 
 
     public MadelAIneModule()
@@ -105,6 +107,12 @@ public class MadelAIneModule : EverestModule
 
         if (!Settings.EnableMadelAIne || self.Paused || ResetRequested) return;
 
+        // Save the session on first render when MadelAIne is enabled and in a level
+        if (savedSession == null)
+        {
+            SaveSession(self);
+        }
+
         Player player = self.Tracker.GetEntity<Player>();
 
         // Update the game state with the player's position and other relevant data
@@ -155,13 +163,71 @@ public class MadelAIneModule : EverestModule
             PlayerDied = player.Dead,
             PlayerReachedNextRoom = reachedNextRoom,
             TargetXPosition = 408f,               // FIXME: Currently hardcoded to second room of prologue
-            TargetYPosition = 150,               // FIXME: Currently hardcoded to second room of prologue
+            TargetYPosition = 150f,               // FIXME: Currently hardcoded to second room of prologue
             ScreenWidth = target.Width,
             ScreenHeight = target.Height,
             ScreenPixelsBase64 = base64String
         };
 
         return state;
+    }
+
+    private T DeepCopy<T>(T obj)
+    {
+        if (obj == null) return default(T);
+        return DeepCopier.Copy(obj);
+    }
+
+    private void SaveSession(Level level)
+    {
+        if (level?.Session == null) return;
+
+        try
+        {
+            savedSession = DeepCopy(level.Session);
+            Logger.Info(nameof(MadelAIneModule), $"Saved session state for level: {savedSession.Level}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(nameof(MadelAIneModule), $"Error saving session: {ex.Message}");
+            savedSession = null;
+        }
+    }
+
+    private void RestoreSession(Level level)
+    {
+        if (savedSession == null || level?.Session == null) return;
+
+        try
+        {
+            var restoredSession = DeepCopy(savedSession);
+            // Copy the restored session properties to the current session
+            level.Session.Level = restoredSession.Level;
+            level.Session.RespawnPoint = restoredSession.RespawnPoint;
+            level.Session.Inventory = restoredSession.Inventory;
+            level.Session.Flags = restoredSession.Flags;
+            level.Session.LevelFlags = restoredSession.LevelFlags;
+            level.Session.Strawberries = restoredSession.Strawberries;
+            level.Session.DoNotLoad = restoredSession.DoNotLoad;
+            level.Session.Keys = restoredSession.Keys;
+            level.Session.Counters = restoredSession.Counters;
+            level.Session.FurthestSeenLevel = restoredSession.FurthestSeenLevel;
+            level.Session.StartCheckpoint = restoredSession.StartCheckpoint;
+            level.Session.ColorGrade = restoredSession.ColorGrade;
+            level.Session.SummitGems = restoredSession.SummitGems;
+            level.Session.FirstLevel = restoredSession.FirstLevel;
+            level.Session.Cassette = restoredSession.Cassette;
+            level.Session.HeartGem = restoredSession.HeartGem;
+            level.Session.Dreaming = restoredSession.Dreaming;
+            level.Session.GrabbedGolden = restoredSession.GrabbedGolden;
+            level.Session.HitCheckpoint = restoredSession.HitCheckpoint;
+            
+            Logger.Info(nameof(MadelAIneModule), $"Restored session state for level: {level.Session.Level}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(nameof(MadelAIneModule), $"Error restoring session: {ex.Message}");
+        }
     }
 
     private void ResetGameState()
@@ -176,6 +242,13 @@ public class MadelAIneModule : EverestModule
             if (LastPlayer == null) return;
             player = LastPlayer;
         }
+        
+        // Restore the saved session if available
+        if (savedSession != null)
+        {
+            RestoreSession(level);
+        }
+        
         level.TeleportTo(player, "0", Player.IntroTypes.Respawn);
 
         LastPlayer = null;

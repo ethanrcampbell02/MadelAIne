@@ -28,9 +28,14 @@
         <Reference Include="$(CelestePrefix)\FNA.dll" Private="false" />
     </ItemGroup>
 
-    <Target Name="CopyFiles" AfterTargets="Build" Inputs="$(OutputPath)\$(AssemblyName).dll;$(OutputPath)\$(AssemblyName).pdb" Outputs="..\bin\$(AssemblyName).dll;..\bin\$(AssemblyName).pdb">
+    <ItemGroup>
+        <ProjectReference Include="..\DeepCopy\src\DeepCopy\DeepCopy.csproj" Private="true" />
+    </ItemGroup>
+
+    <Target Name="CopyFiles" AfterTargets="Build" Inputs="$(OutputPath)\$(AssemblyName).dll;$(OutputPath)\$(AssemblyName).pdb;$(OutputPath)\DeepCopy.dll" Outputs="..\bin\$(AssemblyName).dll;..\bin\$(AssemblyName).pdb;..\bin\DeepCopy.dll">
         <Copy SourceFiles="$(OutputPath)\$(AssemblyName).dll" DestinationFolder="..\bin" />
         <Copy SourceFiles="$(OutputPath)\$(AssemblyName).pdb" DestinationFolder="..\bin" />
+        <Copy SourceFiles="$(OutputPath)\DeepCopy.dll" DestinationFolder="..\bin" />
     </Target>
 
     <Target Name="PackageMod" AfterTargets="CopyFiles" Inputs="$(ZippedFiles)" Outputs="..\MadelAIne.zip" Condition="'$(Configuration)' == 'Release'">
