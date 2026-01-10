@@ -7,7 +7,7 @@ import logging
 import gymnasium as gym
 import cv2
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 class CelesteEnv(gym.Env):
 
@@ -42,7 +42,7 @@ class CelesteEnv(gym.Env):
 
         self._steps = 0
         self._visited_rooms = set()  # Track all rooms entered during episode
-        self._time_limit = 3600  # Initial time limit (60 seconds)
+        self._time_limit = 900  # Initial time limit (15 seconds)
         self._current_action = None  # Store current action for ACK message
         
         # Rendering setup
@@ -57,8 +57,23 @@ class CelesteEnv(gym.Env):
         logging.debug("Closing environment")
         if self.render_mode == "human" and self._render_window_created:
             cv2.destroyWindow(self._window_name)
+        
+        # Send shutdown message to C# before closing
+        try:
+            shutdown_msg = json.dumps({"type": "shutdown"}).encode('utf-8')
+            self._conn.sendall(shutdown_msg)
+            logging.info("Sent shutdown message to C#")
+        except Exception as e:
+            logging.warning(f"Failed to send shutdown message: {e}")
+        
+        # Close connections gracefully
+        try:
+            self._conn.shutdown(socket.SHUT_RDWR)
+        except:
+            pass
         self._conn.close()
         self._server_sock.close()
+        logging.info("Environment closed")
 
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         logging.debug("Resetting environment")
@@ -67,7 +82,7 @@ class CelesteEnv(gym.Env):
 
         self._steps = 0
         self._visited_rooms = set()
-        self._time_limit = 3600  # Reset to 60 seconds
+        self._time_limit = 900  # Reset to 15 seconds
         self._current_action = None  # Clear action for fresh start
 
         # Send reset message to C#
@@ -100,6 +115,8 @@ class CelesteEnv(gym.Env):
         # Send the action to C#
         self._current_action = action
         self._send_action()
+
+        self._steps += 1
 
         # Receive the updated game state
         observation = self._get_obs()
@@ -160,8 +177,6 @@ class CelesteEnv(gym.Env):
 
         # Penalize for each step taken
         reward = reward - 0.2
-
-        self._steps += 1
 
         # Render the environment if render mode is human
         if self.render_mode == "human":

@@ -26,14 +26,14 @@ def get_action_from_keys(keys):
     """
     action = np.zeros(7, dtype=np.int8)
     
-    # Arrow keys for movement
-    if keys.get(ord('i'), False) or keys.get(82, False):  # Up arrow or 'I'
+    # IJKL for movement
+    if keys.get(ord('i'), False) or keys.get(ord('I'), False):  # Up
         action[0] = 1
-    if keys.get(ord('k'), False) or keys.get(84, False):  # Down arrow or 'K'
+    if keys.get(ord('k'), False) or keys.get(ord('K'), False):  # Down
         action[1] = 1
-    if keys.get(ord('j'), False) or keys.get(81, False):  # Left arrow or 'J'
+    if keys.get(ord('j'), False) or keys.get(ord('J'), False):  # Left
         action[2] = 1
-    if keys.get(ord('l'), False) or keys.get(83, False):  # Right arrow or 'L'
+    if keys.get(ord('l'), False) or keys.get(ord('L'), False):  # Right
         action[3] = 1
     
     # Action buttons
@@ -73,7 +73,7 @@ def main():
     
     print("Connected!")
     print("\nControls:")
-    print("  Arrow Keys / IJKL: Movement")
+    print("  IJKL: Movement (I=up, K=down, J=left, L=right)")
     print("  D: Jump")
     print("  S: Dash")
     print("  A: Grab")
@@ -109,7 +109,7 @@ def main():
             print("\nPress keys to modify action, SPACE to step, R to reset...")
             
             # Wait for key press
-            key = cv2.waitKey(0) & 0xFF
+            key = cv2.waitKey(0)
             
             # Handle special keys
             if key == ord('q') or key == ord('Q') or key == 27:  # Q or ESC
@@ -128,14 +128,13 @@ def main():
             
             # Update key states (toggle on/off)
             if key in [ord('a'), ord('A'), ord('s'), ord('S'), ord('d'), ord('D'),
-                      ord('i'), ord('I'), ord('k'), ord('K'), ord('j'), ord('J'), ord('l'), ord('L'),
-                      0, 1, 2, 3]:  # Arrow keys
+                      ord('i'), ord('I'), ord('k'), ord('K'), ord('j'), ord('J'), ord('l'), ord('L')]:
                 if key in current_keys and current_keys[key]:
                     current_keys[key] = False
-                    print(f"Released key: {chr(key) if key >= 32 else f'Arrow({key})'}")
+                    print(f"Released key: {chr(key).upper()}")
                 else:
                     current_keys[key] = True
-                    print(f"Pressed key: {chr(key) if key >= 32 else f'Arrow({key})'}")
+                    print(f"Pressed key: {chr(key).upper()}")
                 continue  # Don't step, just update keys
             
             # Space bar or any other key = step
@@ -155,7 +154,7 @@ def main():
                     reason = "terminated" if terminated else "truncated"
                     print(f"\n[AUTO-RESET] Episode ended ({reason})")
                     print("Press any key to reset and continue, or Q to quit...")
-                    key = cv2.waitKey(0) & 0xFF
+                    key = cv2.waitKey(0)
                     if key == ord('q') or key == ord('Q') or key == 27:
                         break
                     

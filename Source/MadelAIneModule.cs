@@ -45,7 +45,7 @@ public class MadelAIneModule : EverestModule
     public MadelAIneModule()
     {
         Instance = this;
-        Logger.SetLogLevel(nameof(MadelAIneModule), LogLevel.Debug);
+        Logger.SetLogLevel(nameof(MadelAIneModule), LogLevel.Info);
     }
 
     public override void Load()
@@ -84,10 +84,25 @@ public class MadelAIneModule : EverestModule
         }
 
         if (!lastCalledWasUpdate) {
-            // Check if reset is pending and transition is complete
-            if (Engine.Scene is Level level && !level.Transitioning && ResetRequested) {
-                ResetGameState();
-                ResetRequested = false;
+            // Handle cutscenes - skip them automatically
+            if (Engine.Scene is Level level && level.InCutscene) {
+                if (!level.SkippingCutscene) {
+                    Logger.Info(nameof(MadelAIneModule), "Skipping cutscene...");
+                    level.SkipCutscene();
+                }
+                orig(self, gameTime);
+                lastCalledWasUpdate = true;
+                return;
+            }
+
+            // Execute pending reset when level transition completes
+            if (ResetRequested && Engine.Scene is Level resetLevel && !resetLevel.Transitioning) {
+                Player player = resetLevel.Tracker.GetEntity<Player>();
+                if (player != null && !player.Dead) {
+                    Logger.Info(nameof(MadelAIneModule), "Resetting game state...");
+                    ResetGameState();
+                    ResetRequested = false;
+                }
             }
 
             orig(self, gameTime);
@@ -320,25 +335,7 @@ public class MadelAIneModule : EverestModule
         catch (Exception ex)
         {
             Logger.Error(nameof(MadelAIneModule), $"Error sending game state: {ex.Message}");
-            Logger.Error(nameof(MadelAIneModule), $"Disabling MadelAIne");
-            if (tcpStream != null)
-            {
-                tcpStream.Close();
-                tcpStream = null;
-            }
-            if (tcpClient != null)
-            {
-                tcpClient.Close();
-                tcpClient = null;
-            }
-            
-            // Clean up state on connection failure
-            savedSession = null;
-            ResetRequested = false;
-            ResetInputs();
-            
-            Settings.EnableMadelAIne = false;
-
+            CleanupConnection();
             return false;
         }
     }
@@ -350,6 +347,15 @@ public class MadelAIneModule : EverestModule
         {
             byte[] buffer = new byte[1024];
             int bytesRead = tcpStream.Read(buffer, 0, buffer.Length);
+            
+            // Check if connection was closed gracefully
+            if (bytesRead == 0)
+            {
+                Logger.Info(nameof(MadelAIneModule), "Python client closed connection gracefully");
+                CleanupConnection();
+                return false;
+            }
+            
             string response = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim('\0');
 
             using var doc = JsonDocument.Parse(response);
@@ -370,6 +376,12 @@ public class MadelAIneModule : EverestModule
                 Logger.Info(nameof(MadelAIneModule), "Reset requested by Python client.");
                 return true;
             }
+            else if (type == "shutdown")
+            {
+                Logger.Info(nameof(MadelAIneModule), "Shutdown requested by Python client");
+                CleanupConnection();
+                return false;
+            }
             else
             {
                 Logger.Error(nameof(MadelAIneModule), $"Unexpected response type from Python client: {type}");
@@ -379,26 +391,31 @@ public class MadelAIneModule : EverestModule
         catch (Exception ex)
         {
             Logger.Error(nameof(MadelAIneModule), $"Error receiving response from Python client: {ex.Message}");
-            
-            // Clean up state on communication failure
-            if (tcpStream != null)
-            {
-                tcpStream.Close();
-                tcpStream = null;
-            }
-            if (tcpClient != null)
-            {
-                tcpClient.Close();
-                tcpClient = null;
-            }
-            
-            savedSession = null;
-            ResetRequested = false;
-            ResetInputs();
-            Settings.EnableMadelAIne = false;
-            
+            CleanupConnection();
             return false;
         }
+    }
+    
+    private void CleanupConnection()
+    {
+        // Clean up connection and state
+        if (tcpStream != null)
+        {
+            tcpStream.Close();
+            tcpStream = null;
+        }
+        if (tcpClient != null)
+        {
+            tcpClient.Close();
+            tcpClient = null;
+        }
+        
+        savedSession = null;
+        ResetRequested = false;
+        ResetInputs();
+        Settings.EnableMadelAIne = false;
+        
+        Logger.Info(nameof(MadelAIneModule), "Connection cleaned up, MadelAIne disabled");
     }
 
     private void ApplyInputs(JsonElement response)
