@@ -8,7 +8,7 @@ from stable_baselines3.common.monitor import Monitor
 import logging
 
 from CelesteEnv import CelesteEnv
-from wrappers import SimplifiedActionSpace, SkipFrame
+from wrappers import SimplifiedActionSpace, SkipFrame, ClipReward
 from gymnasium.wrappers import ResizeObservation, GrayscaleObservation
 from utils import get_current_date_time_string
 
@@ -58,31 +58,56 @@ class ProgressCallback(BaseCallback):
         super().__init__(verbose)
         self.episode_rewards = []
         self.episode_lengths = []
+        self.episode_distances_travelled = []  # Track total distance travelled each episode
+        self.episode_distance_per_step = []  # Track distance travelled per step
+        self.num_episodes = 0
         
     def _on_step(self) -> bool:
-        # Log episode statistics
-        if len(self.model.ep_info_buffer) > 0:
-            for info in self.model.ep_info_buffer:
-                self.episode_rewards.append(info['r'])
-                self.episode_lengths.append(info['l'])
+        # Check if episode completed (only count when actually finished)
+        for idx, done in enumerate(self.locals.get("dones", [])):
+            if done:
+                info = self.locals["infos"][idx]
+                if "episode" in info:
+                    self.episode_rewards.append(info["episode"]["r"])
+                    self.episode_lengths.append(info["episode"]["l"])
+                    self.num_episodes += 1
+                    
+                    # Track distance metrics from the episode info
+                    if "distance_travelled" in info:
+                        self.episode_distances_travelled.append(info["distance_travelled"])
+                        
+                        # Calculate distance per step (higher is better)
+                        episode_time = info["episode"]["l"]  # Episode length in steps
+                        if episode_time > 0:
+                            distance_per_step = info["distance_travelled"] / episode_time
+                            self.episode_distance_per_step.append(distance_per_step)
+                    
+                    # Log to TensorBoard
+                    if len(self.episode_distances_travelled) > 0:
+                        self.logger.record("rollout/ep_distance_travelled_mean", np.mean(self.episode_distances_travelled[-10:]))
+                    if len(self.episode_distance_per_step) > 0:
+                        self.logger.record("rollout/ep_distance_per_step_mean", np.mean(self.episode_distance_per_step[-10:]))
                 
         # Log every 1000 steps
         if self.n_calls % 1000 == 0:
             if len(self.episode_rewards) > 0:
                 mean_reward = np.mean(self.episode_rewards[-10:])  # Last 10 episodes
                 mean_length = np.mean(self.episode_lengths[-10:])
+                mean_distance = np.mean(self.episode_distances_travelled[-10:]) if len(self.episode_distances_travelled) > 0 else 0
                 logging.info(
                     f"Step: {self.n_calls} | "
-                    f"Episodes: {len(self.episode_rewards)} | "
+                    f"Episodes: {self.num_episodes} | "
                     f"Mean Reward (last 10): {mean_reward:.2f} | "
-                    f"Mean Length (last 10): {mean_length:.1f}"
+                    f"Mean Length (last 10): {mean_length:.1f} | "
+                    f"Mean Distance Travelled (last 10): {mean_distance:.2f}"
                 )
         return True
 
 
 def make_env():
     """Create and wrap the Celeste environment"""
-    env = CelesteEnv(reward_mode="best", render_mode=None)
+    env = CelesteEnv(reward_mode="best", render_mode="human")
+    env = ClipReward(env, min_reward=-1, max_reward=1)
     env = SimplifiedActionSpace(env)
     env = SkipFrame(env, skip=4)
     env = ResizeObservation(env, shape=(84, 84))  # Standard Atari size

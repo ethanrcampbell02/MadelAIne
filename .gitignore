@@ -361,3 +361,7 @@ MigrationBackup/
 # JetBrains Rider
 .idea
 
+# Python model training outputs
+models/
+*.npy
+

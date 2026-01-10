@@ -96,6 +96,7 @@ class CelesteEnv(gym.Env):
         self._starting_distance = info["distance"] if info and info["distance"] is not None else 500.0
         self._prev_distance = self._starting_distance
         self._best_distance = self._starting_distance
+        self._distance_travelled = 0.0  # Track cumulative progress towards target
         
         # Add starting room to visited rooms
         if info and "levelName" in info:
@@ -149,6 +150,8 @@ class CelesteEnv(gym.Env):
         # Update previous and best distances
         self._prev_distance = distance
         if distance < self._best_distance:
+            progress = self._best_distance - distance
+            self._distance_travelled += progress
             self._best_distance = distance
 
         # Check if entered a new room
@@ -275,7 +278,8 @@ class CelesteEnv(gym.Env):
                 "steps": self._steps,
                 "playerDied": self._json_data["playerDied"] if "playerDied" in self._json_data else False,
                 "playerReachedNextRoom": self._json_data["playerReachedNextRoom"] if "playerReachedNextRoom" in self._json_data else False,
-                "levelName": self._json_data.get("levelName", "unknown")
+                "levelName": self._json_data.get("levelName", "unknown"),
+                "distance_travelled": self._distance_travelled if hasattr(self, "_distance_travelled") else 0.0
             }
         else:
             return None
