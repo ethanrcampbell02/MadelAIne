@@ -9,6 +9,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Xna.Framework.Graphics;
 using DeepCopy;
+using Celeste.Mod.ProgrammaticInput.Binds;
 
 /* Note: Several code snippets used to calculate the current state have been adapted
    from viddie's Physics Inspector in the Consistency Tracker mod.
@@ -44,7 +45,7 @@ public class MadelAIneModule : EverestModule
     public MadelAIneModule()
     {
         Instance = this;
-        Logger.SetLogLevel(nameof(MadelAIneModule), LogLevel.Info);
+        Logger.SetLogLevel(nameof(MadelAIneModule), LogLevel.Debug);
     }
 
     public override void Load()
@@ -60,6 +61,10 @@ public class MadelAIneModule : EverestModule
         On.Celeste.Level.Render -= Level_Render;
         On.Monocle.Engine.Update -= Engine_Update;
         On.Monocle.Engine.Draw -= Engine_Draw;
+        
+        // Reset all inputs before unloading
+        ResetInputs();
+        
         if (tcpStream != null)
         {
             tcpStream.Close();
@@ -79,8 +84,10 @@ public class MadelAIneModule : EverestModule
         }
 
         if (!lastCalledWasUpdate) {
+            // Check if reset is pending and transition is complete
             if (Engine.Scene is Level level && !level.Transitioning && ResetRequested) {
-                ResetGameState();   
+                ResetGameState();
+                ResetRequested = false;
             }
 
             orig(self, gameTime);
@@ -124,7 +131,12 @@ public class MadelAIneModule : EverestModule
         if (!success) return;
 
         // Receive the response from the server, reset state if requested.
-        ResetRequested = ReceiveResponse();
+        // Note: Reset will be executed in Engine_Update when transition completes
+        bool resetReceived = ReceiveResponse();
+        if (resetReceived)
+        {
+            ResetRequested = true;
+        }
     }
 
     private GameState GetState(Player player, Level level)
@@ -162,11 +174,12 @@ public class MadelAIneModule : EverestModule
             PlayerYPosition = pos.Y,
             PlayerDied = player.Dead,
             PlayerReachedNextRoom = reachedNextRoom,
-            TargetXPosition = 408f,               // FIXME: Currently hardcoded to second room of prologue
-            TargetYPosition = 150f,               // FIXME: Currently hardcoded to second room of prologue
+            TargetXPosition = 2000f,                // FIXME: Currently hardcoded to final dash cutscene of prologue
+            TargetYPosition = 60f,                  // FIXME: Currently hardcoded to final dash cutscene of prologue
             ScreenWidth = target.Width,
             ScreenHeight = target.Height,
-            ScreenPixelsBase64 = base64String
+            ScreenPixelsBase64 = base64String,
+            LevelName = debugRoomName
         };
 
         return state;
@@ -233,7 +246,6 @@ public class MadelAIneModule : EverestModule
     private void ResetGameState()
     {
 
-        // Load Celeste/1-ForsakenCity room 1
         if (!(Engine.Scene is Level)) return;
         Level level = (Level)Engine.Scene;
         Player player = level.Tracker.GetEntity<Player>();
@@ -243,17 +255,33 @@ public class MadelAIneModule : EverestModule
             player = LastPlayer;
         }
         
+        // Reset all inputs before resetting game state
+        ResetInputs();
+        
         // Restore the saved session if available
         if (savedSession != null)
         {
             RestoreSession(level);
+            level.TeleportTo(player, savedSession.Level, Player.IntroTypes.Respawn);
         }
-        
-        level.TeleportTo(player, "0", Player.IntroTypes.Respawn);
 
         LastPlayer = null;
         LastRoomName = null;
-        ResetRequested = false;
+    }
+    
+    private void ResetInputs()
+    {
+        // Reset all GameplayBinds to neutral/released state
+        GameplayBinds.MoveX.SetNeutral();
+        GameplayBinds.MoveY.SetNeutral();
+        
+        GameplayBinds.Jump.Release();
+        GameplayBinds.Dash.Release();
+        GameplayBinds.Grab.Release();
+        GameplayBinds.Talk.Release();
+        GameplayBinds.CrouchDash.Release();
+        
+        Logger.Debug(nameof(MadelAIneModule), "Reset all GameplayBinds inputs");
     }
     
     private bool SendGameState(GameState state)
@@ -303,6 +331,12 @@ public class MadelAIneModule : EverestModule
                 tcpClient.Close();
                 tcpClient = null;
             }
+            
+            // Clean up state on connection failure
+            savedSession = null;
+            ResetRequested = false;
+            ResetInputs();
+            
             Settings.EnableMadelAIne = false;
 
             return false;
@@ -327,6 +361,8 @@ public class MadelAIneModule : EverestModule
             string type = typeProp.GetString();
             if (type == "ACK")
             {
+                // Parse and apply inputs from ACK message
+                ApplyInputs(doc.RootElement);
                 return false;
             }
             else if (type == "reset")
@@ -343,7 +379,84 @@ public class MadelAIneModule : EverestModule
         catch (Exception ex)
         {
             Logger.Error(nameof(MadelAIneModule), $"Error receiving response from Python client: {ex.Message}");
+            
+            // Clean up state on communication failure
+            if (tcpStream != null)
+            {
+                tcpStream.Close();
+                tcpStream = null;
+            }
+            if (tcpClient != null)
+            {
+                tcpClient.Close();
+                tcpClient = null;
+            }
+            
+            savedSession = null;
+            ResetRequested = false;
+            ResetInputs();
+            Settings.EnableMadelAIne = false;
+            
             return false;
+        }
+    }
+
+    private void ApplyInputs(JsonElement response)
+    {
+        try
+        {
+            // Parse input values from response
+            // Expected format: {"type": "ACK", "moveX": 0.0, "moveY": 0.0, "jump": false, "dash": false, "grab": false}
+            
+            // Movement axes
+            if (response.TryGetProperty("moveX", out var moveXProp))
+            {
+                float moveX = moveXProp.GetSingle();
+                if (moveX == 0)
+                    GameplayBinds.MoveX.SetNeutral();
+                else
+                    GameplayBinds.MoveX.SetValue(moveX);
+            }
+            
+            if (response.TryGetProperty("moveY", out var moveYProp))
+            {
+                float moveY = moveYProp.GetSingle();
+                if (moveY == 0)
+                    GameplayBinds.MoveY.SetNeutral();
+                else
+                    GameplayBinds.MoveY.SetValue(moveY);
+            }
+            
+            // Button presses
+            if (response.TryGetProperty("jump", out var jumpProp))
+            {
+                if (jumpProp.GetBoolean())
+                    GameplayBinds.Jump.Press();
+                else
+                    GameplayBinds.Jump.Release();
+            }
+            
+            if (response.TryGetProperty("dash", out var dashProp))
+            {
+                if (dashProp.GetBoolean())
+                    GameplayBinds.Dash.Press();
+                else
+                    GameplayBinds.Dash.Release();
+            }
+            
+            if (response.TryGetProperty("grab", out var grabProp))
+            {
+                if (grabProp.GetBoolean())
+                    GameplayBinds.Grab.Press();
+                else
+                    GameplayBinds.Grab.Release();
+            }
+            
+            Logger.Debug(nameof(MadelAIneModule), "Applied inputs from Python");
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(nameof(MadelAIneModule), $"Error applying inputs: {ex.Message}");
         }
     }
 }

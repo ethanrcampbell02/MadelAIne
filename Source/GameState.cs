@@ -31,5 +31,8 @@ namespace Celeste.Mod.MadelAIne
 
         [JsonPropertyName("screenPixelsBase64")]
         public string ScreenPixelsBase64 { get; set; }
+
+        [JsonPropertyName("levelName")]
+        public string LevelName { get; set; }
     }
 }

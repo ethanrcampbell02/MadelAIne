@@ -4,11 +4,10 @@ import json
 import numpy as np
 from typing import Optional
 import logging
-from CelesteInputs import CelesteInputs
 import gymnasium as gym
 import cv2
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 
 class CelesteEnv(gym.Env):
 
@@ -33,10 +32,18 @@ class CelesteEnv(gym.Env):
         # self._conn.settimeout(0.1)  # 0.1 second timeout for all recv operations
         logging.info(f"Connected to {self._addr}")
 
+        # Initial dummy receive to sync with C# client
+        dummy = self._recv_json()
+        if dummy is None:
+            logging.error("Failed to receive dummy message from C# client during initialization")
+            return None, None
+
         self._json_data = None
-        self._celeste_inputs = CelesteInputs()
 
         self._steps = 0
+        self._visited_rooms = set()  # Track all rooms entered during episode
+        self._time_limit = 3600  # Initial time limit (60 seconds)
+        self._current_action = None  # Store current action for ACK message
         
         # Rendering setup
         self._window_name = "Celeste Environment"
@@ -52,32 +59,36 @@ class CelesteEnv(gym.Env):
             cv2.destroyWindow(self._window_name)
         self._conn.close()
         self._server_sock.close()
-        self._celeste_inputs.reset_keyboard()
 
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
         logging.debug("Resetting environment")
 
         self._options = options
 
-        # Perform keyboard sequence to restart chapter
-        self._celeste_inputs.reset_keyboard()
-
         self._steps = 0
+        self._visited_rooms = set()
+        self._time_limit = 3600  # Reset to 60 seconds
+        self._current_action = None  # Clear action for fresh start
 
-        # Receive a dummy message and send the reset message
-        dummy = self._recv_json()
-        if dummy is None:
-            logging.error("Failed to receive dummy message from C# client during reset")
-            return None, None
+        # Send reset message to C#
         reset_msg = json.dumps({"type": "reset"}).encode('utf-8')
         self._conn.sendall(reset_msg)
 
+        # Get initial observation without sending any action
         observation = self._get_obs()
         info = self._get_info()
 
         self._starting_distance = info["distance"] if info and info["distance"] is not None else 500.0
         self._prev_distance = self._starting_distance
         self._best_distance = self._starting_distance
+        
+        # Add starting room to visited rooms
+        if info and "levelName" in info:
+            self._visited_rooms.add(info["levelName"])
+
+        # Render the initial state if render mode is human
+        if self.render_mode == "human":
+            self.render(observation, info)
 
         # DEBUG: Write JSON data to file
         with open("debug.json", "w") as f:
@@ -86,25 +97,21 @@ class CelesteEnv(gym.Env):
         return observation, info
 
     def step(self, action):        
-        # Perform desired action by updating keyboard state
-        self._celeste_inputs = CelesteInputs.from_action(action)
-        self._celeste_inputs.update_keyboard()
+        # Send the action to C#
+        self._current_action = action
+        self._send_action()
 
-        # Request the game statesasasa
+        # Receive the updated game state
         observation = self._get_obs()
         info = self._get_info()
-        
-        # Render the environment if render mode is human
-        if self.render_mode == "human":
-            self.render(observation, info)
 
-        # TODO: Terminate if reached the next room
+        # Check for death
         terminated = info["playerDied"] if info is not None and "playerDied" in info else False
         if terminated:
             logging.debug("Episode terminated: player died")
 
-        # Truncate after 15 seconds
-        truncated = self._steps >= 900
+        # Truncate based on dynamic time limit
+        truncated = self._steps >= self._time_limit
         if truncated:
             logging.debug("Episode truncated: time limit reached")
 
@@ -127,11 +134,25 @@ class CelesteEnv(gym.Env):
         if distance < self._best_distance:
             self._best_distance = distance
 
-        # Big reward for making it to the next room
+        # Check if entered a new room
         if info is not None and "playerReachedNextRoom" in info and info["playerReachedNextRoom"]:
-            reward = reward + 50.0
-            terminated = True
-            logging.debug("Episode terminated: reached next room")
+            current_room = info.get("levelName", None)
+            if current_room is not None and current_room not in self._visited_rooms:
+                # New room discovered!
+                self._visited_rooms.add(current_room)
+                reward += 50.0
+                self._time_limit += 900  # Add 15 more seconds
+                logging.info(f"Entered new room: {current_room}. Extended time limit by 15s. Total rooms: {len(self._visited_rooms)}")
+            # Don't terminate - continue exploring
+        
+        # Check if reached goal (player X >= target X)
+        if info is not None and self._json_data is not None:
+            player_x = self._json_data.get("playerXPosition", 0)
+            target_x = self._json_data.get("targetXPosition", float('inf'))
+            if player_x >= target_x:
+                reward += 100.0
+                terminated = True
+                logging.info(f"Goal reached! Player X ({player_x:.1f}) >= Target X ({target_x:.1f})")
 
         # Penalize if died
         if info is not None and "playerDied" in info and info["playerDied"]:
@@ -142,23 +163,28 @@ class CelesteEnv(gym.Env):
 
         self._steps += 1
 
+        # Render the environment if render mode is human
+        if self.render_mode == "human":
+            self.render(observation, info)
+
         logging.debug(f"Finished step {self._steps}")
 
         return observation, reward, terminated, truncated, info
 
     def _get_obs(self):
+        """Receive game state from C# - does not send actions"""
         # If in JSON debug mode, just read from the JSON file
         if self._options is not None and "json_debug" in self._options and self._options["json_debug"]:
             with open("debug.json", "r") as f:
                 self._json_data = json.load(f)
         else:
+            # Receive the game state from C#
             self._json_data = None
             while self._json_data is None:
                 self._json_data = self._recv_json()
                 if self._json_data is None:
                     logging.error("Failed to receive valid JSON")
                     return None
-                self._send_ack()
 
         img_base64 = self._json_data["screenPixelsBase64"] if "screenPixelsBase64" in self._json_data else None
         width = self._json_data["screenWidth"] if "screenWidth" in self._json_data else 320
@@ -186,13 +212,37 @@ class CelesteEnv(gym.Env):
             logging.error(f"Error receiving JSON: {e}")
             return None
 
-    def _send_ack(self):
+    def _send_action(self):
+        """Send action to C# as ACK message - does not receive state"""
         try:
-            ack_msg = json.dumps({"type": "ACK"}).encode('utf-8')
+            # Convert action to input values
+            # Action is always MultiBinary: [up, down, left, right, jump, dash, grab]
+            
+            inputs = {
+                "type": "ACK",
+                "moveX": 0.0,
+                "moveY": 0.0,
+                "jump": False,
+                "dash": False,
+                "grab": False
+            }
+            
+            if self._current_action is not None:
+                action = self._current_action
+                
+                # MultiBinary format: [up, down, left, right, jump, dash, grab]
+                if len(action) >= 7:
+                    inputs["moveY"] = -1.0 if action[0] else (1.0 if action[1] else 0.0)
+                    inputs["moveX"] = -1.0 if action[2] else (1.0 if action[3] else 0.0)
+                    inputs["jump"] = bool(action[4])
+                    inputs["dash"] = bool(action[5])
+                    inputs["grab"] = bool(action[6])
+            
+            ack_msg = json.dumps(inputs).encode('utf-8')
             self._conn.sendall(ack_msg)
             return True
         except Exception as e:
-            logging.error(f"Error sending ACK: {e}")
+            logging.error(f"Error sending action: {e}")
             return False
 
     @staticmethod
@@ -209,7 +259,8 @@ class CelesteEnv(gym.Env):
                 ),
                 "steps": self._steps,
                 "playerDied": self._json_data["playerDied"] if "playerDied" in self._json_data else False,
-                "playerReachedNextRoom": self._json_data["playerReachedNextRoom"] if "playerReachedNextRoom" in self._json_data else False
+                "playerReachedNextRoom": self._json_data["playerReachedNextRoom"] if "playerReachedNextRoom" in self._json_data else False,
+                "levelName": self._json_data.get("levelName", "unknown")
             }
         else:
             return None
@@ -219,12 +270,10 @@ class CelesteEnv(gym.Env):
         if self.render_mode != "human":
             return
             
-        if observation is None:
-            observation = self._get_obs()
-        if info is None:
-            info = self._get_info()
-            
-        if observation is None:
+        # Don't call _get_obs() here to avoid protocol violations
+        # Observation and info should be provided by caller
+        if observation is None or info is None:
+            logging.warning("render() called without observation/info - skipping")
             return
             
         # Create display image

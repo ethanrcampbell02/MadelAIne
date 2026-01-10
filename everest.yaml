@@ -4,3 +4,5 @@
   Dependencies:
     - Name: EverestCore
       Version: 1.5577.0
+    - Name: ProgrammaticInput
+      Version: 0.1.3
